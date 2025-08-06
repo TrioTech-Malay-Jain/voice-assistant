@@ -1,0 +1,344 @@
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\all_code_snippets.txt -----
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\copy_utils.py -----
+import os
+
+# Root directory to start searching from
+ROOT_DIR = r"C:\Users\int10281\Desktop\Github\voice-assistant"
+
+# File extensions to include
+INCLUDE_EXTENSIONS = {'.py', '.js', '.css', '.html', '.txt'}
+
+# Output file where combined code will be saved
+OUTPUT_FILE = os.path.join(ROOT_DIR, "all_code_snippets.txt")
+
+def should_include(file_name):
+    return os.path.splitext(file_name)[1] in INCLUDE_EXTENSIONS
+
+def copy_code_snippets():
+    with open(OUTPUT_FILE, 'w', encoding='utf-8') as outfile:
+        for dirpath, _, filenames in os.walk(ROOT_DIR):
+            for filename in filenames:
+                if should_include(filename):
+                    file_path = os.path.join(dirpath, filename)
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                            outfile.write(f"\n\n----- File: {file_path} -----\n")
+                            outfile.write(content)
+                    except Exception as e:
+                        print(f"Could not read {file_path}: {e}")
+
+    print(f"\n✅ Code snippets copied to: {OUTPUT_FILE}")
+
+if __name__ == "__main__":
+    copy_code_snippets()
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\requirements.txt -----
+fastapi
+uvicorn
+python-multipart
+jinja2
+gtts
+openai-whisper
+ffmpeg-python
+google-generativeai
+livekit-agents
+silero-vad
+torch
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\run.py -----
+import uvicorn
+
+if __name__ == "__main__":
+    uvicorn.run("app.main:app", host="0.0.0.0", port=7860, reload=True)
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\run_livekit_agent.py -----
+# run_livekit_agent.py
+
+import asyncio
+import os
+import google.generativeai as genai
+
+from livekit import connect
+from livekit.agents import JobContext, AgentSession, Agent
+from livekit.plugins import silero
+
+from app.services.whisper_service import WhisperService
+from app.services.tts_service import TTSService
+
+# 👇 Required: Set your API keys and LiveKit URL/token
+LIVEKIT_URL = "wss://your-livekit-url"
+LIVEKIT_TOKEN = "your_livekit_access_token"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # or hardcode for dev
+
+class VoiceAssistant(Agent):
+    def __init__(self):
+        super().__init__(instructions="You are a helpful voice assistant.")
+
+async def entrypoint(ctx: JobContext):
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel("gemini-1.5-flash")
+
+    whisper = WhisperService()
+    tts = TTSService()
+
+    session = AgentSession(
+        stt=lambda path: whisper.transcribe(path)[0],
+        llm=lambda prompt: model.generate_content(prompt).text,
+        tts=lambda text: tts.synthesize(text),
+        vad=silero.VAD.load()
+    )
+
+    await session.start(room=ctx.room, agent=VoiceAssistant())
+
+async def run_agent():
+    room = await connect(LIVEKIT_URL, LIVEKIT_TOKEN)
+    ctx = JobContext(
+        room=room,
+        proc=None,
+        info=None,
+        on_connect=lambda: print("🔗 Connected"),
+        on_shutdown=lambda: print("❌ Disconnected"),
+        inference_executor=None,
+    )
+    await entrypoint(ctx)
+
+if __name__ == "__main__":
+    asyncio.run(run_agent())
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\app\main.py -----
+import os
+import google.generativeai as genai
+from livekit.agents import AgentSession, Agent, JobContext
+from livekit.plugins import silero
+from app.services.whisper_service import WhisperService
+from app.services.tts_service import TTSService
+
+class VoiceAssistant(Agent):
+    def __init__(self):
+        super().__init__(instructions="You are a helpful voice assistant.")
+
+async def entrypoint(ctx: JobContext):
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    model = genai.GenerativeModel("gemini-1.5-flash")
+
+    whisper = WhisperService()
+    tts = TTSService()
+
+    session = AgentSession(
+        stt=lambda path: whisper.transcribe(path)[0],
+        llm=lambda prompt: model.generate_content(prompt).text,
+        tts=lambda text: tts.synthesize(text),
+        vad=silero.VAD.load(),
+    )
+
+    await session.start(room=ctx.room, agent=VoiceAssistant())
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\app\__init__.py -----
+
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\app\agents\assistant.py -----
+# app/agents/assistant.py
+
+from livekit import agents
+from livekit.agents import Agent, AgentSession
+from livekit.plugins import silero
+from app.services.whisper_service import WhisperService
+from app.services.tts_service import TTSService
+import google.generativeai as genai
+import tempfile
+
+class VoiceAssistant(Agent):
+    def __init__(self):
+        super().__init__(instructions="You're a helpful assistant.")
+
+async def entrypoint(ctx: agents.JobContext):
+    temp_dir = tempfile.mkdtemp()
+    session = AgentSession(
+        stt=WhisperService(cache_dir=temp_dir),  # Add `cache_dir` param in your class
+        llm=lambda prompt: genai.GenerativeModel("gemini-1.5-flash").generate_content(prompt).text,
+        tts=TTSService(),
+        vad=silero.VAD.load()
+    )
+    await session.start(room=ctx.room, agent=VoiceAssistant())
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\app\agents\__init__.py -----
+
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\app\routes\stt.py -----
+from fastapi import APIRouter, File, UploadFile
+from app.services.whisper_service import WhisperService
+
+router = APIRouter()
+whisper = WhisperService()
+
+@router.post("/transcribe")
+async def transcribe(file: UploadFile = File(...)):
+    with open("temp_audio.webm", "wb") as f:
+        f.write(await file.read())
+
+    text, lang = whisper.transcribe("temp_audio.webm")
+    return {"text": text, "language": lang}
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\app\routes\tts.py -----
+from fastapi import APIRouter, Form
+from app.services.tts_service import TTSService
+
+router = APIRouter()
+tts = TTSService()
+
+@router.post("/speak")
+def speak(text: str = Form(...), lang: str = Form("en")):
+    filepath = tts.synthesize(text, lang)
+    return {"audio_path": filepath}
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\app\routes\__init__.py -----
+
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\app\services\llm_service.py -----
+import os
+import google.generativeai as genai
+
+class GeminiService:
+    def __init__(self):
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        self.model = genai.GenerativeModel("gemini-1.5-flash")
+
+    def generate_response(self, prompt: str):
+        response = self.model.generate_content(prompt)
+        return response.text.strip()
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\app\services\tts_service.py -----
+from gtts import gTTS
+import uuid
+import os
+
+class TTSService:
+    def __init__(self, output_dir="/tmp"):
+        self.output_dir = output_dir
+
+    def synthesize(self, text, lang="en"):
+        filename = os.path.join(self.output_dir, f"tts_{uuid.uuid4().hex}.mp3")
+        tts = gTTS(text=text, lang=lang if lang in ["en", "hi"] else "en")
+        tts.save(filename)
+        return filename
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\app\services\vad_service.py -----
+from livekit.plugins import silero
+
+class VADService:
+    def __init__(self):
+        self.vad = silero.VAD.load()
+
+    def get(self):
+        return self.vad
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\app\services\whisper_service.py -----
+import whisper
+import os
+import tempfile
+
+class WhisperService:
+    def __init__(self, model_size="base",cache_dir="/tmp"):
+        os.makedirs(cache_dir, exist_ok=True)
+        self.model = whisper.load_model(model_size,download_root=cache_dir)
+
+    def transcribe(self, audio_path):
+        result = self.model.transcribe(audio_path, task="transcribe")
+        return result["text"], result["language"]
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\app\services\__init__.py -----
+
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\app\static\script.js -----
+const recordBtn = document.getElementById("recordBtn");
+const responseAudio = document.getElementById("responseAudio");
+
+let mediaRecorder;
+let chunks = [];
+
+recordBtn.onclick = async () => {
+  if (!mediaRecorder || mediaRecorder.state === "inactive") {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    chunks = [];
+
+    mediaRecorder.ondataavailable = e => chunks.push(e.data);
+
+    mediaRecorder.onstop = async () => {
+      const blob = new Blob(chunks, { type: "audio/webm" });
+      const formData = new FormData();
+      formData.append("file", blob, "audio.webm");
+
+      // Transcribe
+      const transcribeRes = await fetch("/api/transcribe", {
+        method: "POST",
+        body: formData
+      });
+      const { text, language } = await transcribeRes.json();
+      console.log("Transcript:", text);
+
+      // Speak
+      const speakData = new FormData();
+      speakData.append("text", text);
+      speakData.append("lang", language);
+
+      const speakRes = await fetch("/api/speak", {
+        method: "POST",
+        body: speakData
+      });
+      const { audio_path } = await speakRes.json();
+
+      // Play
+      responseAudio.src = audio_path;
+      responseAudio.style.display = "block";
+      responseAudio.play();
+    };
+
+    mediaRecorder.start();
+    recordBtn.textContent = "⏹️ Stop Recording";
+  } else {
+    mediaRecorder.stop();
+    recordBtn.textContent = "🎤 Start Recording";
+  }
+};
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\app\templates\index.html -----
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Voice Assistant</title>
+  <script src="/static/script.js" defer></script>
+</head>
+<body>
+  <h1>🎙️ Voice Assistant</h1>
+
+  <button id="recordBtn">🎤 Start Recording</button>
+  <audio id="responseAudio" controls style="display: none;"></audio>
+</body>
+</html>
+
+
+----- File: C:\Users\int10281\Desktop\Github\voice-assistant\tests\test_stt.py -----
+

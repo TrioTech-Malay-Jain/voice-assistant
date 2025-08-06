@@ -1,1 +1,5 @@
-
+sdk: docker
+python_version: "3.10"
+system_packages:
+  - ffmpeg
+app_file: run_livekit_agent.py

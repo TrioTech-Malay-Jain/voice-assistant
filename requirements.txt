@@ -1,1 +1,11 @@
-
+fastapi
+uvicorn
+python-multipart
+jinja2
+gtts
+openai-whisper
+ffmpeg-python
+google-generativeai
+livekit-agents
+silero-vad
+torch
